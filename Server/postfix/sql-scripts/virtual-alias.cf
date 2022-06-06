@@ -1,0 +1,5 @@
+user = vmail
+password = DB_PASSWORD
+dbname = vmail
+query = select `destination` from `alias` where `alias` = '%u@%d'
+hosts = localhost

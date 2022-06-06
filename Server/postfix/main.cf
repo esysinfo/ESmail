@@ -1,0 +1,3 @@
+virtual_mailbox_domains = proxy:mysql:/etc/postfix/sql-scripts/virtual-domains.cf
+virtual_mailbox_maps = proxy:mysql:/etc/postfix/sql-scripts/virtual-users.cf
+virtual_alias_maps = proxy:mysql:/etc/postfix/sql-scripts/virtual-alias.cf

@@ -1,0 +1,5 @@
+user = vmail
+password = DB_PASSWORD
+dbname = vmail
+query = SELECT CONCAT(d.`virtual`, '@', m.`account`, '/') FROM `domain` d INNER JOIN `mail` m ON m.`domain_id` = d.`ID` WHERE m.`account` = '%u' AND d.`virtual` = '%d' AND m.`status` = 1
+hosts = localhost
