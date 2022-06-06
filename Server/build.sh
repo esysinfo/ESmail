@@ -20,9 +20,9 @@ function _config_database {
 }
 
 function _install_package {
-    yum install -y epel-release
-    yum install -y chrony opendkim opendkim-tools postfix dovecot spamassassin dovecot-pigeonhole dovecot-mysql postfix-mysql -y
-    yum install -y mod_ssl php-fpm php-gd php-xml php-json php-mbstring php-mysqli php-pdo php-intl php-pecl-zip mariadb-server policycoreutils-python-utils
+    yum install -y epel-release &> /dev/null || echo "Install EPEL fail."
+    yum install -y chrony opendkim opendkim-tools postfix dovecot spamassassin dovecot-pigeonhole dovecot-mysql postfix-mysql -y &> /dev/null || echo "Install packages fail."
+    yum install -y mod_ssl php-fpm php-gd php-xml php-json php-mbstring php-mysqli php-pdo php-intl php-pecl-zip mariadb-server policycoreutils-python-utils &> /dev/null || echo "Install packages fail."
 }
 
 function _config_firewall {
@@ -39,6 +39,97 @@ function _enable_service {
     systemctl enable httpd mariadb php-fpm
 
     systemctl restart httpd mariadb php-fpm postfix dovecot opendkim
+}
+
+function _config_webmail {
+    DB_PASS=$(tr -dc A-Za-z0-9_ </dev/urandom | head -c 16 ; echo '')
+    echo "CREATE DATABASE webmail;" | mysql -u root -h localhost
+    echo "GRANT ALL ON webmail.* TO 'wmail'@'localhost' IDENTIFIED BY '${DB_PASS}' WITH GRANT OPTION;" | mysql -u root -h localhost
+
+    mysql -uwmail -p${DB_PASS} -h localhost webmail < ../mail/SQL/mysql.initial.sql
+
+    mail_key=$(tr -dc A-Za-z0-9_ </dev/urandom | head -c 24 ; echo '')
+
+    sed -i -e "s/@@DB_CONFIG_PASSWORD@@/${DB_PASS}/g" ${cw}/mail/config.inc.php
+    sed -i -e "s/@@DES_KEY@@/${mail_key}/g" ${cw}/mail/config.inc.php
+
+    cp ${cw}/mail/config.inc.php ../mail/config/
+
+    mv ../mail/installer{,_disable}
+    chmod 700 ../mail/installer_disable
+    chown root:root ../mail/installer_disable
+    
+}
+
+function _config_postfix {
+    postconf -e "inet_interfaces = all"
+    postconf -e "myorigin = ${_DomainName}"
+    postconf -e "virtual_transport = dovecot"
+    postconf -e "dovecot_destination_recipient_limit = 1"
+    postconf -e "enable_original_recipient = no"
+    postconf -e "message_size_limit = 20971520"
+    postconf -e "virtual_mailbox_domains = proxy:mysql:/etc/postfix/sql-scripts/virtual-domains.cf"
+    postconf -e "virtual_mailbox_base = /MDDATA/vmail"
+    postconf -e "virtual_mailbox_maps = proxy:mysql:/etc/postfix/sql-scripts/virtual-users.cf"
+    postconf -e "virtual_uid_maps = static:498"
+    postconf -e "virtual_gid_maps = static:498"
+    postconf -e "smtpd_recipient_restrictions = permit_mynetworks permit_sasl_authenticated reject_unauth_destination permit_mx_backup"
+    postconf -e "smtpd_sasl_auth_enable = yes"
+    postconf -e "broken_sasl_auth_clients = yes"
+    postconf -e "smtpd_sasl_type = dovecot"
+    postconf -e "smtpd_sasl_path = private/auth"
+    postconf -e "smtpd_sasl_security_options = noanonymous"
+    postconf -e "smtpd_use_tls = yes"
+    postconf -e "smtp_use_tls = yes"
+    postconf -e "tls_random_source = dev:/dev/urandom"
+    postconf -e "smtpd_tls_cert_file = /etc/postfix/ssl/smtpd.crt"
+    postconf -e "smtpd_tls_key_file = /etc/postfix/ssl/smtpd.key"
+    postconf -e "virtual_alias_maps = proxy:mysql:/etc/postfix/sql-scripts/virtual-alias.cf"
+    postconf -e "transport_maps = hash:/etc/postfix/transport, regexp:/etc/postfix/transport.regexp"
+    postconf -e "smtpd_milters = inet:localhost:8891"
+    postconf -e "non_smtpd_milters = inet:localhost:8891"
+    postconf -e "milter_default_action = accept"
+    postconf -e "smtpd_tls_exclude_ciphers = aNULL, eNULL, EXPORT, DES, RC4, MD5, PSK, aECDH, EDH-DSS-DES-CBC3-SHA, EDH-RSA-DES-CBC3-SHA, KRB5-DES, CBC3-SHA"
+    postconf -e "smtpd_tls_dh1024_param_file = /etc/pki/dhparams.pem"
+    postconf -e "yahoo_initial_destination_concurrency = 1" 
+    postconf -e "yahoo_destination_concurrency_limit = 4" 
+    postconf -e "yahoo_destination_recipient_limit = 2" 
+    postconf -e "yahoo_destination_rate_delay = 1s" 
+    postconf -e "inet_protocols = ipv4"
+}
+
+function _config_dkim {
+    cat > /etc/opendkim.conf <<EOF
+PidFile	/var/run/opendkim/opendkim.pid
+Mode	sv
+Syslog	yes
+SyslogSuccess	yes
+LogWhy	yes
+UserID	opendkim:opendkim
+Socket	inet:8891@localhost
+Umask	002
+Canonicalization	relaxed/relaxed
+Selector	default
+MinimumKeyBits 1024
+KeyTable	/etc/opendkim/KeyTable
+SigningTable refile:/etc/opendkim/SigningTable
+ExternalIgnoreList	refile:/etc/opendkim/TrustedHosts
+InternalHosts	refile:/etc/opendkim/TrustedHosts
+MilterDebug 1
+EOF
+
+    cat >> /etc/opendkim/SigningTable <<EOF
+*@${_DomainName} default._domainkey.${_DomainName}
+EOF
+
+    cat >> /etc/opendkim/KeyTable <<EOF
+default._domainkey.${_DomainName} ${_DomainName}:default:/etc/opendkim/keys/${_DomainName}/default.private
+EOF
+
+    mkdir -p /etc/opendkim/keys/${_DomainName}/
+    cd /etc/opendkim/keys/${_DomainName}
+    opendkim-genkey -r -d ${_DomainName}
+    chown opendkim:opendkim default.private
 }
 
 _DomainName=$1
@@ -117,39 +208,7 @@ mkdir -p /etc/postfix/ssl
 ln -s /etc/pki/dovecot/certs/dovecot.pem /etc/postfix/ssl/smtpd.crt
 ln -s /etc/pki/dovecot/private/dovecot.pem /etc/postfix/ssl/smtpd.key
 
-postconf -e "inet_interfaces = all"
-postconf -e "myorigin = ${_DomainName}"
-postconf -e "virtual_transport = dovecot"
-postconf -e "dovecot_destination_recipient_limit = 1"
-postconf -e "enable_original_recipient = no"
-postconf -e "message_size_limit = 20971520"
-postconf -e "virtual_mailbox_domains = proxy:mysql:/etc/postfix/sql-scripts/virtual-domains.cf"
-postconf -e "virtual_mailbox_base = /MDDATA/vmail"
-postconf -e "virtual_mailbox_maps = proxy:mysql:/etc/postfix/sql-scripts/virtual-users.cf"
-postconf -e "virtual_uid_maps = static:498"
-postconf -e "virtual_gid_maps = static:498"
-postconf -e "smtpd_recipient_restrictions = permit_mynetworks permit_sasl_authenticated reject_unauth_destination permit_mx_backup"
-postconf -e "smtpd_sasl_auth_enable = yes"
-postconf -e "broken_sasl_auth_clients = yes"
-postconf -e "smtpd_sasl_type = dovecot"
-postconf -e "smtpd_sasl_path = private/auth"
-postconf -e "smtpd_sasl_security_options = noanonymous"
-postconf -e "smtpd_use_tls = yes"
-postconf -e "smtp_use_tls = yes"
-postconf -e "tls_random_source = dev:/dev/urandom"
-postconf -e "smtpd_tls_cert_file = /etc/postfix/ssl/smtpd.crt"
-postconf -e "smtpd_tls_key_file = /etc/postfix/ssl/smtpd.key"
-postconf -e "virtual_alias_maps = proxy:mysql:/etc/postfix/sql-scripts/virtual-alias.cf"
-postconf -e "transport_maps = hash:/etc/postfix/transport, regexp:/etc/postfix/transport.regexp"
-postconf -e "smtpd_milters = inet:localhost:8891"
-postconf -e "non_smtpd_milters = inet:localhost:8891"
-postconf -e "milter_default_action = accept"
-postconf -e "smtpd_tls_exclude_ciphers = aNULL, eNULL, EXPORT, DES, RC4, MD5, PSK, aECDH, EDH-DSS-DES-CBC3-SHA, EDH-RSA-DES-CBC3-SHA, KRB5-DES, CBC3-SHA"
-postconf -e "smtpd_tls_dh1024_param_file = /etc/pki/dhparams.pem"
-postconf -e "yahoo_initial_destination_concurrency = 1" 
-postconf -e "yahoo_destination_concurrency_limit = 4" 
-postconf -e "yahoo_destination_recipient_limit = 2" 
-postconf -e "yahoo_destination_rate_delay = 1s" 
+_config_postfix
 
 touch /etc/postfix/alias /etc/postfix/transport /etc/postfix/virtual /etc/postfix/domains
 cat >> /etc/postfix/transport <<EOF
@@ -213,43 +272,13 @@ dovecot unix - n n - - pipe flags=DRhu user=vmail:vmail argv=/usr/libexec/doveco
 yahoo unix - - n - - smtp -o syslog_name=postfix-yahoo
 EOF
 
-cat > /etc/opendkim.conf <<EOF
-PidFile	/var/run/opendkim/opendkim.pid
-Mode	sv
-Syslog	yes
-SyslogSuccess	yes
-LogWhy	yes
-UserID	opendkim:opendkim
-Socket	inet:8891@localhost
-Umask	002
-Canonicalization	relaxed/relaxed
-Selector	default
-MinimumKeyBits 1024
-KeyTable	/etc/opendkim/KeyTable
-SigningTable refile:/etc/opendkim/SigningTable
-ExternalIgnoreList	refile:/etc/opendkim/TrustedHosts
-InternalHosts	refile:/etc/opendkim/TrustedHosts
-MilterDebug 1
-EOF
-
 touch /etc/postfix/alias /etc/postfix/transport /etc/postfix/virtual /etc/postfix/domains
 postmap /etc/postfix/alias
 postmap /etc/postfix/transport
 postmap /etc/postfix/transport.regexp
 postmap /etc/postfix/virtual
 
-cat >> /etc/opendkim/SigningTable <<EOF
-*@${_DomainName} default._domainkey.${_DomainName}
-EOF
-
-cat >> /etc/opendkim/KeyTable <<EOF
-default._domainkey.${_DomainName} ${_DomainName}:default:/etc/opendkim/keys/${_DomainName}/default.private
-EOF
-
-mkdir -p /etc/opendkim/keys/${_DomainName}/
-cd /etc/opendkim/keys/${_DomainName}
-opendkim-genkey -r -d ${_DomainName}
-chown opendkim:opendkim default.private
+_config_dkim
 
 cd ${cw}
 openssl dhparam -out /etc/pki/dhparams.pem 2048
@@ -263,6 +292,7 @@ _config_firewall
 
 _enable_service
 
+_config_webmail
 
 echo "Copy files"
 cp -R ../{mail,mgmt} /var/www/html/

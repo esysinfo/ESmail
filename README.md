@@ -76,22 +76,5 @@
 
 本包套件包含 Roundcube Webmail 1.4.13 版本，安裝流程如下:
 
-1. 開啟 `https://web.esys-example.com/mail/installer/`
-2. 依序輸入指定的欄位
-3. 將輸出的範例內容，上傳到 `/var/www/html/mail/config/config.inc.php`
-4. 設定關閉安裝工具
-
-    1. 將下列文字，加入 `/var/www/html/mail/config/config.inc.php` 最後一行
-
-        ```=
-        $enable_config = false;
-        ```
-    2. 關閉安裝程序
-
-        ```
-        root# cd /var/www/html/mail/
-        root# mv installer/ installer_disable/
-        root# chown -R root:root installer_disable/
-        root# chmod 700 installer_disable/
-        ```
-5. 開始使用 Webmail
+1. 開啟 `https://web.esys-example.com/mail/`
+2. 使用完整帳號登入 Wbmail
