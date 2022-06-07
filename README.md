@@ -1,4 +1,4 @@
-# ESYS MailServer Solution
+# ESYS ESmail
 
 ![image](mgmt/images/ESmail-logo.png)
 
