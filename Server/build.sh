@@ -20,9 +20,10 @@ function _config_database {
 }
 
 function _install_package {
-    yum install -y epel-release &> /dev/null || echo "Install EPEL fail."
-    yum install -y chrony opendkim opendkim-tools postfix dovecot spamassassin dovecot-pigeonhole dovecot-mysql postfix-mysql -y &> /dev/null || echo "Install packages fail."
-    yum install -y mod_ssl php-fpm php-gd php-xml php-json php-mbstring php-mysqli php-pdo php-intl php-pecl-zip mariadb-server policycoreutils-python-utils &> /dev/null || echo "Install packages fail."
+    dnf install -y epel-release &> /dev/null || echo "Install EPEL fail."
+    dnf config-manager --set-enabled crb
+    dnf install -y chrony opendkim opendkim-tools postfix dovecot spamassassin dovecot-pigeonhole dovecot-mysql postfix-mysql -y &> /dev/null || echo "Install packages fail."
+    dnf install -y mod_ssl php-fpm php-gd php-xml php-json php-mbstring php-mysqli php-pdo php-intl php-pecl-zip mariadb-server policycoreutils-python-utils &> /dev/null || echo "Install packages fail."
 }
 
 function _config_firewall {
